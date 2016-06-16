@@ -250,12 +250,15 @@ function find(connectionName, collectionName, criteria, cb, round) {
   })({});
 
   var queriedAttributes = Object.keys(criteria.where || {});
+  var sortAttributes = Object.keys(criteria.sort || {});
   //console.log("Queried Attributes: ",queriedAttributes);
 
   // Handle case where no criteria is specified at all
   // (list all documents in the couch collection)
-  if (queriedAttributes.length === 0) {
+  if (queriedAttributes.length === 0 && sortAttributes.length === 0) {
     // console.log('Queried Attributes" (aka criteria\'s WHERE clause) doesn\'t contain any values-- listing everything!');
+
+    console.log(">>>>[", round, "] Find ", collectionName, ": ", dbOptions);
 
     // All docs
     dbOptions.include_docs = true;
@@ -278,11 +281,11 @@ function find(connectionName, collectionName, criteria, cb, round) {
     return;
   }
 
-
   // Handle query for a single doc using the provided primary key criteria (e.g. `findOne()`)
   if (queriedAttributes.length == 1 && (queriedAttributes[0] == 'id' || queriedAttributes[0] == '_id')) {
     var id = criteria.where.id || criteria.where._id;
 
+    console.log(">>>>[", round, "] Find ", collectionName, " (id) : ", criteria);
     db.get(id, dbOptions, function(err, doc) {
       if (err) {
         if (err.status_code == 404) {
@@ -296,45 +299,36 @@ function find(connectionName, collectionName, criteria, cb, round) {
     return;
   }
 
-  // Take a look at `criteria.where.like`...
-  asyncx_ifTruthy(criteria.where.like,
+  console.log(">>>>[", round, "] Find ", collectionName, " (where/sort) : ", criteria);
+  if (criteria.sort && 'object' === typeof criteria.sort && Object.keys(criteria.sort).length !== 1)
+    return cb(new Error('only support single-level sorting'));
 
-    // Handle "like" modifier using a view
-    function ifSoDo(next){
-      var viewName = views.name(criteria.where.like);
-      var value = views.likeValue(criteria.where.like, true);
-      dbOptions.startkey = value.startkey;
-      dbOptions.endkey = value.endkey;
-      return db.view('views', viewName, dbOptions, next);
-    },
+  // Handle general-case criteria queries using a view
+  var viewName = views.name(criteria.where, criteria.sort);
+  var criteriaOptions = views.params(criteria.where, criteria.sort);
+  if (criteriaOptions) _.assign(dbOptions, criteriaOptions);
 
-    // Handle general-case criteria queries using a view
-    function elseDo (next){
-      var viewName = views.name(criteria.where);
-      dbOptions.key = views.value(criteria.where);
-      return db.view('views', viewName, dbOptions, next);
-    },
-
-    function finallyDo(err, reply) {
-      if (err) {
-        if (err.status_code === 404 && round < 1) {
-          views.create(db, criteria.where.like || criteria.where, function createdView(err) {
-            if (err) {
-              return cb(err);
-            }
-            find.call(connectionName, connectionName, collectionName, criteria, cb, round + 1);
-          });
-          return;
-        }
-
-        return cb(err);
+  console.log(">>>>>>else view[", viewName, "] -- key: ", criteriaOptions);
+  return db.view('views', viewName, dbOptions, function (err, reply) {
+    if (err) {
+      if (err.status_code === 404 && round < 1) {
+        console.log(">>>>>>finally create view!");
+        var where = (!criteria.where) ? null : (criteria.where.like) ?
+          criteria.where.like: criteria.where;
+        views.create(db, where, criteria.sort, function createdView(err) {
+          if (err) {
+            return cb(err);
+          }
+          find.call(connectionName, connectionName, collectionName, criteria, cb, round + 1);
+        });
+        return;
       }
 
-      return cb(null, reply.rows.map(prop('value')).map(docForReply));
+      return cb(err);
     }
-  );
 
-
+    return cb(null, reply.rows.map(prop('value')).map(docForReply));
+  });
 }
 
 

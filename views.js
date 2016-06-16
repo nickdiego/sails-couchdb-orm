@@ -10,28 +10,68 @@ var templates = {
 
 exports.name = viewName;
 
-function viewName(where) {
-  return ['by'].concat(Object.keys(where).sort()).join('_');
+function viewName(where, sort) {
+  var name = '';
+  if (where)
+    name += ['by'].concat(Object.keys(where).sort()).join('_');
+  if (sort) {
+    if (name.length > 0) name += '_';
+    name += ['sortby'].concat(Object.keys(sort)).join('_');
+  }
+  return name;
 };
 
 
-/// Value
+/// Params
 
-exports.value = value;
+exports.params = params;
 
-function value(options, isLike) {
-  return Object.keys(options).sort().map(function(key) {
-    return options[key];
-  });
+function params(where, sort) {
+  if (!where)
+    return null;
+
+  var params = {};
+  if (hasLike(where)) { // where.like will generate params.startkey and key.endkey entries
+    var like = where.like;
+    params.startkey = params.endkey = [];
+    Object.keys(like).sort().forEach(function(key) {
+      var value = like[key];
+      if ('string' != typeof value) throw new Error('like value must be a string');
+      if (value.charAt(value.length - 1) == '%') value = value.substring(0, value.length - 1);
+      params.startkey.push(value);
+      params.endkey.push(value + '\ufff0');
+    });
+  } else { // where.like will generate only params.key entry
+    params.key = Object.keys(where).sort().map(function(key) {
+      return where[key];
+    });
+  }
+
+  if (sort) { // add sort options
+    var firstSortKey = Object.keys(sort).shift();
+
+    if (params.key) { // sort with where criteria (filter)
+      params.startkey = params.endkey = params.key;
+      delete params.key;
+    }
+    params.descending = sort[firstSortKey] === -1;
+    if (!params.descending) params.endkey = params.startkey.concat({});
+    else params.startkey = params.endkey.concat({});
+    console.log("params() ", where, " -- ", sort, " --> ", params);
+  }
+
+  return params;
+
+  function hasLike(where) {
+    return where.like && 'object' == typeof(where.like)
+  }
 }
 
-exports.likeValue = likeValue;
-
-function likeValue(options) {
+function likeValue(like) {
   var startKey = [];
   var endKey = [];
-  Object.keys(options).sort().forEach(function(key) {
-    var value = options[key];
+  Object.keys(like).sort().forEach(function(key) {
+    var value = like[key];
     if ('string' != typeof value) throw new Error('like value must be a string');
     if (value.charAt(value.length - 1) == '%') value = value.substring(0, value.length - 1);
     startKey.push(value);
@@ -49,8 +89,11 @@ function likeValue(options) {
 
 exports.create = createView;
 
-function createView(db, where, cb) {
-  var attributes = Object.keys(where).sort().map(fixAttributeName);
+function createView(db, where, sort, cb) {
+  var attributes = [];
+  if (where) attributes.push(Object.keys(where).sort().map(fixAttributeName));
+  if (sort) attributes.push(Object.keys(sort).map(fixAttributeName));
+
   var map = templates.map({
     attributes: attributes,
     attribute: attributes.length == 1 && attributes[0],
@@ -62,7 +105,7 @@ function createView(db, where, cb) {
   function gotDesignDoc(err, ddoc) {
     if (! ddoc) ddoc = {};
     if (! ddoc.views) ddoc.views = {};
-    ddoc.views[viewName(where)] = {
+    ddoc.views[viewName(where, sort)] = {
       map: map
     };
 
