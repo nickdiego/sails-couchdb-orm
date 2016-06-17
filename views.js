@@ -70,9 +70,8 @@ function params(where, sort) {
 exports.create = createView;
 
 function createView(db, where, sort, cb) {
-  var attributes = [];
-  if (where) attributes.push(Object.keys(where).sort().map(fixAttributeName));
-  if (sort) attributes.push(Object.keys(sort).map(fixAttributeName));
+  var attributes = Object.keys(where).sort().map(fixAttributeName);
+  if (sort) attributes.push(fixAttributeName(Object.keys(sort)[0]));
 
   var map = templates.map({
     attributes: attributes,
