@@ -70,7 +70,7 @@ function params(where, sort) {
 exports.create = createView;
 
 function createView(db, where, sort, cb) {
-  var attributes = Object.keys(where).sort().map(fixAttributeName);
+  var attributes = Object.keys(where || {}).sort().map(fixAttributeName);
   if (sort) attributes.push(fixAttributeName(Object.keys(sort)[0]));
 
   var map = templates.map({
